@@ -1,0 +1,27 @@
+.pw-card {
+    background-color: rgba(24, 24, 32, 0.6);
+    border-radius: 24px;
+    padding: 20px 24px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    spacing: 6px;
+}
+
+.pw-text {
+    color: white;
+}
+
+.pw-title {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+    letter-spacing: 2px;
+}
+
+.pw-big {
+    font-size: 44px;
+    font-weight: bold;
+}
+
+.pw-small {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 16px;
+}

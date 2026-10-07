@@ -1,0 +1,6 @@
+{
+  "uuid": "panelwidgets@fy17.github.com",
+  "name": "Panel Widgets",
+  "description": "Desktop widgets loaded from folders. Each widget is a folder with a widget.js, built from parts and variables.",
+  "shell-version": ["49", "50", "51"]
+}

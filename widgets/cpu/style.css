@@ -1,0 +1,9 @@
+.pw-cpu {
+    min-width: 260px;
+}
+
+.pw-cpu .cpu-big {
+    color: #78c0ff;
+    font-size: 56px;
+    font-weight: bold;
+}
