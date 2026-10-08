@@ -5,13 +5,14 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {CONFIG_DIR, CONFIG_FILE_NAME, Config, ensureDirs, findWidgetDirs} from './core/config.js';
-import {Part, clearParts, registerPart} from './core/parts.js';
+import {
+    CONFIG_DIR, CONFIG_FILE_NAME, Config, USER_PARTS_DIR, USER_VARIABLES_DIR, ensureDirs, findWidgetDirs,
+} from './core/config.js';
+import {loadParts, loadVariables} from './core/loader.js';
+import {Part, clearParts, defineParts} from './core/parts.js';
 import {Runner} from './core/runner.js';
-import {clearVariables, getVariable, registerVariable, registerVariables} from './core/variables.js';
+import {clearVariables, defineVariables} from './core/variables.js';
 import {Widget} from './core/widget.js';
-import {registerBuiltinParts} from './parts/index.js';
-import {registerBuiltinVariables} from './variables/index.js';
 
 const LOG = '[panelwidgets]';
 const CONFIG_DEBOUNCE_MS = 300;
@@ -27,14 +28,13 @@ export default class PanelWidgets extends Extension {
         this._widgets = new Map(); // id -> {widget, runner, key}, widgets currently shown
         this._reloadId = 0;
 
-        globalThis.PanelWidgets = {Widget, Part, registerPart, registerVariable, registerVariables, getVariable};
-        registerBuiltinParts();
-        registerBuiltinVariables();
+        // Has to exist before the user's files are imported, they read it at the top
+        globalThis.PanelWidgets = Object.freeze({Widget, Part});
 
         this._config = new Config();
         this._config.load();
         this._watchConfig();
-        this._loadWidgets(this._token);
+        this._load(this._token);
     }
 
     disable() {
@@ -62,6 +62,21 @@ export default class PanelWidgets extends Extension {
         delete globalThis.PanelWidgets;
     }
 
+    // Variables first, then parts, then widgets. So no widget is built before everything it can use is there
+    async _load(token) {
+        const variableDefinitions = await loadVariables(GLib.build_filenamev([this.path, 'variables']), USER_VARIABLES_DIR);
+        if (this._token !== token)
+            return;
+        defineVariables(variableDefinitions);
+
+        const parts = await loadParts(GLib.build_filenamev([this.path, 'parts']), USER_PARTS_DIR);
+        if (this._token !== token)
+            return;
+        defineParts(parts);
+
+        await this._loadWidgets(token);
+    }
+
     async _loadWidgets(token) {
         const builtinDir = GLib.build_filenamev([this.path, 'widgets']);
         for (const [id, dir] of findWidgetDirs(builtinDir)) {
@@ -73,8 +88,8 @@ export default class PanelWidgets extends Extension {
                 if (this._token !== token)
                     return; // extension was disabled while loading
 
-                // Widgets can register their own parts and variables here
-                module.register?.(globalThis.PanelWidgets);
+                if (module.register)
+                    console.warn(`${LOG} ${id}: register() is no longer used, put shared parts and variables in parts/ and variables/`);
                 this._known.set(id, {
                     id,
                     WidgetClass: module.default,
@@ -124,7 +139,7 @@ export default class PanelWidgets extends Extension {
             Main.layoutManager._backgroundGroup.add_child(widget.actor);
         } catch (e) {
             console.error(`${LOG} kunde inte skapa widgeten ${known.id}: ${e.message}`);
-            widget?.disposeParts?.();
+            widget?.dispose?.();
             widget?.actor?.destroy?.();
             return;
         }
@@ -144,7 +159,7 @@ export default class PanelWidgets extends Extension {
         } catch (e) {
             console.error(`${LOG} ${id}: destroy() failed: ${e.message}`);
         }
-        widget.disposeParts();
+        widget.dispose();
         widget.actor.destroy();
         this._widgets.delete(id);
     }

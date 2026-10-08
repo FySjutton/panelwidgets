@@ -1,11 +1,10 @@
 import St from 'gi://St';
 
 import {Part} from '../core/parts.js';
-import {render} from '../core/variables.js';
 
-export class TextPart extends Part {
+// text is either a fixed string or a function that gives the text on every update
+export default class TextPart extends Part {
     build() {
-        this.template = this.options.text ?? '';
         this.label = new St.Label({
             style_class: ['pw-text', this.options.style].filter(Boolean).join(' '),
         });
@@ -13,6 +12,7 @@ export class TextPart extends Part {
     }
 
     update() {
-        this.label.text = render(this.template);
+        const {text} = this.options;
+        this.label.text = String((typeof text === 'function' ? text() : text) ?? '');
     }
 }

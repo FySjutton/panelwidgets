@@ -3,6 +3,8 @@ import GLib from 'gi://GLib';
 
 export const CONFIG_DIR = GLib.build_filenamev([GLib.get_user_config_dir(), 'panelwidgets']);
 export const USER_WIDGETS_DIR = GLib.build_filenamev([CONFIG_DIR, 'widgets']);
+export const USER_PARTS_DIR = GLib.build_filenamev([CONFIG_DIR, 'parts']);
+export const USER_VARIABLES_DIR = GLib.build_filenamev([CONFIG_DIR, 'variables']);
 export const CONFIG_FILE_NAME = 'config.json';
 const CONFIG_FILE = GLib.build_filenamev([CONFIG_DIR, CONFIG_FILE_NAME]);
 
@@ -10,31 +12,37 @@ const CONFIG_FILE = GLib.build_filenamev([CONFIG_DIR, CONFIG_FILE_NAME]);
 export const STANDARD_DEFAULTS = {enabled: true, x: 100, y: 100};
 
 export function ensureDirs() {
-    GLib.mkdir_with_parents(USER_WIDGETS_DIR, 0o755);
+    for (const dir of [USER_WIDGETS_DIR, USER_PARTS_DIR, USER_VARIABLES_DIR])
+        GLib.mkdir_with_parents(dir, 0o755);
 }
 
-function listDirectories(path) {
+function listChildren(path, fileType) {
     const names = [];
     try {
         const children = Gio.File.new_for_path(path).enumerate_children(
             'standard::name,standard::type', Gio.FileQueryInfoFlags.NONE, null);
         let info;
         while ((info = children.next_file(null)) !== null) {
-            if (info.get_file_type() === Gio.FileType.DIRECTORY)
+            if (info.get_file_type() === fileType)
                 names.push(info.get_name());
         }
         children.close(null);
     } catch (_e) {
         // folder doesn't exist
     }
-    return names;
+    return names.sort((a, b) => a.localeCompare(b));
+}
+
+// All .js files directly in a folder, sorted by name
+export function listJsFiles(path) {
+    return listChildren(path, Gio.FileType.REGULAR).filter(name => name.endsWith('.js'));
 }
 
 // Finds all folders that contains a widget.js, name of the folder will be the widget id
 export function findWidgetDirs(builtinDir) {
     const found = new Map();
     for (const root of [builtinDir, USER_WIDGETS_DIR]) {
-        for (const name of listDirectories(root)) {
+        for (const name of listChildren(root, Gio.FileType.DIRECTORY)) {
             const dir = GLib.build_filenamev([root, name]);
             if (GLib.file_test(GLib.build_filenamev([dir, 'widget.js']), GLib.FileTest.EXISTS))
                 found.set(name, dir);

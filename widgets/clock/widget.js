@@ -1,11 +1,14 @@
 const {Widget} = globalThis.PanelWidgets;
 
+const time = () => new Date().toLocaleTimeString('sv-SE');
+const date = () => new Date().toLocaleDateString('sv-SE', {weekday: 'long', day: 'numeric', month: 'long'});
+
 export default class Clock extends Widget {
     interval = 1000;
 
     build() {
-        this.add('text', {text: '{time}', style: 'pw-big'});
+        this.add('text', {text: time, style: 'pw-big'});
         if (this.settings.get('showDate'))
-            this.add('text', {text: '{date}', style: 'pw-small'});
+            this.add('text', {text: date, style: 'pw-small'});
     }
 }

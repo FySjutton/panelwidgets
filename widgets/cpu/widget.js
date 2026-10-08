@@ -1,7 +1,8 @@
 import St from 'gi://St';
 
-const {Widget, Part, getVariable} = globalThis.PanelWidgets;
+const {Widget, Part} = globalThis.PanelWidgets;
 
+// A part only this widget uses: it's given to this.add() as a class, so it never ends up among the shared parts
 class BarPart extends Part {
     build() {
         this.value = 0;
@@ -11,7 +12,7 @@ class BarPart extends Part {
     }
 
     update() {
-        this.value = Number(getVariable(this.options.variable)) || 0;
+        this.value = this.options.value() ?? 0;
         this.area.queue_repaint();
     }
 
@@ -28,19 +29,18 @@ class BarPart extends Part {
     }
 }
 
-export function register(api) {
-    api.registerPart('bar', BarPart);
-}
-
+// No interval, it updates when cpu or load gets a new value
 export default class Cpu extends Widget {
     interval = 1000;
+    updateOnChange = false;
 
     build() {
+        const variables = this.variables;
         this.history = [];
 
         this.add('text', {text: this.settings.get('title'), style: 'pw-title'});
-        this.add('text', {text: '{cpu}%', style: 'cpu-big'});
-        this.add('bar', {variable: 'cpu'}); // vår egen del
+        this.add('text', {text: () => `${variables.cpu ?? '-'}%`, style: 'cpu-big'});
+        this.add(BarPart, {value: () => variables.cpu});
 
         this.length = this.settings.get('history');
         if (this.settings.get('showGraph')) {
@@ -50,16 +50,14 @@ export default class Cpu extends Widget {
         }
 
         if (this.settings.get('showLoad'))
-            this.add('text', {text: 'load {load}', style: 'pw-small'});
+            this.add('text', {text: () => `load ${variables.load ?? '-'}`, style: 'pw-small'});
     }
 
-    update() {
-        const cpu = Number(getVariable('cpu'));
-        if (!Number.isNaN(cpu)) {
-            this.history.push(cpu);
-                        if (this.history.length > this.length)
-                this.history.shift();
-        }
+    update(changed) {
+        const cpu = this.variables.cpu;
+        this.history.push(cpu);
+        if (this.history.length > this.length)
+            this.history.shift();
         this.graph?.queue_repaint();
     }
 
@@ -70,9 +68,11 @@ export default class Cpu extends Widget {
 
         cr.setLineWidth(2);
         cr.setSourceRGBA(0.47, 0.75, 1, 1);
+
+        const max = Math.max(...this.history)
         this.history.forEach((value, i) => {
             const x = w - (this.history.length - 1 - i) * step;
-            const y = h - (value / 100) * h;
+            const y = h - (value / Math.max(max, 10) ?? 100) * h;
             if (i === 0)
                 cr.moveTo(x, y);
             else

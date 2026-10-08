@@ -1,32 +1,31 @@
-import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+
+Gio._promisify(Gio.File.prototype, 'load_contents_async');
 
 const decoder = new TextDecoder();
-const read = path => decoder.decode(GLib.file_get_contents(path)[1]);
+const read = async path => decoder.decode((await Gio.File.new_for_path(path).load_contents_async(null))[0]);
 
 let prevCpu = null;
 
-export const hardware = {
+export default {
     cpu: {
-        interval: 1000,  
-        value: '-',
-        update() {
-            const n = read('/proc/stat').split('\n')[0].split(/\s+/).slice(1).map(Number);
+        interval: 1000,
+        async update() {
+            const n = (await read('/proc/stat')).split('\n')[0].split(/\s+/).slice(1).map(Number);
             const idle = n[3] + n[4];
             const total = n.reduce((a, b) => a + b, 0);
-            if (prevCpu)
-                this.value = String(Math.round(100 * (1 - (idle - prevCpu.idle) / ((total - prevCpu.total) || 1))));
+            const value = prevCpu ? Math.round(100 * (1 - (idle - prevCpu.idle) / ((total - prevCpu.total) || 1))) : null;
             prevCpu = {idle, total};
+            return value;
         },
         reset() {
             prevCpu = null;
-            this.value = '-';
         },
     },
     load: {
         interval: 2000,
-        value: '-',
-        update() {
-            this.value = read('/proc/loadavg').split(' ')[0];
+        async update() {
+            return Number((await read('/proc/loadavg')).split(' ')[0]);
         },
     },
 };

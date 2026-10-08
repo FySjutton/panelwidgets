@@ -1,92 +1,127 @@
 import GLib from 'gi://GLib';
 
 const LOG = '[panelwidgets]';
-const TICK_MS = 250;          // how often we check for variables who should be updated
-const KEEP_ALIVE_MS = 10_000; // how long a variable survives after last usage
-const re = /\{\s*(\w+)\s*\}/g;
+const MIN_INTERVAL_MS = 250; // the fastest a variable may update
 
-const definitions = new Map(); // name -> definition
-const active = new Map();      // name -> {lastUsed, lastRun}, only variables who are used
-let tickId = 0;
+const definitions = new Map(); // name -> definition, filled by the loader from the variables/ folders
+const running = new Map();     // name -> state, only variables someone is subscribed to
+const warned = new Set();      // unknown names we already complained about
 
-const nowMs = () => GLib.get_monotonic_time() / 1000;
-
-export function registerVariable(name, definition) {
-    if (definitions.has(name))
-        console.warn(`${LOG} variable "${name}" registered twice, new one used`);
-    definitions.set(name, definition);
+// Replaces the variables with the ones the loader picked
+export function defineVariables(variables) {
+    clearVariables();
+    for (const [name, definition] of variables)
+        definitions.set(name, definition);
 }
 
-// Register multiple at the same time: {cpu: {...}, load: {...}}
-export function registerVariables(variables) {
-    for (const [name, definition] of Object.entries(variables))
-        registerVariable(name, definition);
-}
-
-function runUpdate(name, definition, state, now) {
+// update() returns the value and may be async. Listeners are only told when the value actually changed
+async function refresh(name, state) {
+    if (state.busy)
+        return; // the previous update is still going, skip this round
+    state.busy = true;
+    let value;
     try {
-        definition.update?.();
+        value = (await state.definition.update()) ?? null;
+        state.failed = false;
     } catch (e) {
-        if (definition.value !== '?')
+        if (!state.failed)
             console.error(`${LOG} variable "${name}" failed: ${e.message}`);
-        definition.value = '?';
+        state.failed = true;
+        value = null;
     }
-    state.lastRun = now;
-}
+    state.busy = false;
 
-// Gets a variable value, or undefined
-export function getVariable(name) {
-    const definition = definitions.get(name);
-    if (!definition)
-        return undefined;
-
-    const now = nowMs();
-    let state = active.get(name);
-    if (!state) {
-        state = {lastUsed: now, lastRun: -Infinity};
-        active.set(name, state);
-        runUpdate(name, definition, state, now); // first value directly
-        startTicker();
-    }
-    state.lastUsed = now;
-    return definition.value;
-}
-
-// Replaced {name} in a text against the variables value, unknown is "?"
-export function render(text) {
-    return text.replace(re, (_, name) => String(getVariable(name) ?? '?'));
-}
-
-function startTicker() {
-    if (!tickId)
-        tickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS, tick);
-}
-
-function tick() {
-    const now = nowMs();
-    for (const [name, state] of active) {
-        const definition = definitions.get(name);
-        if (!definition || now - state.lastUsed > KEEP_ALIVE_MS) {
-            definition?.reset?.();
-            active.delete(name);
-        } else if (now - state.lastRun >= (definition.interval ?? 1000)) {
-            runUpdate(name, definition, state, now);
+    if (state.stopped || Object.is(value, state.value))
+        return;
+    state.value = value;
+    for (const listener of [...state.listeners]) {
+        try {
+            listener(name);
+        } catch (e) {
+            console.error(`${LOG} listener for "${name}" failed: ${e.message}`);
         }
     }
-    if (active.size === 0) {
-        tickId = 0;
-        return GLib.SOURCE_REMOVE;
+}
+
+function stop(name, state) {
+    if (state.stopped)
+        return;
+    state.stopped = true;
+    GLib.Source.remove(state.timerId);
+    if (running.get(name) === state)
+        running.delete(name);
+    try {
+        state.definition.reset?.();
+    } catch (e) {
+        console.error(`${LOG} reset() of "${name}" failed: ${e.message}`);
     }
-    return GLib.SOURCE_CONTINUE;
+}
+
+// The first subscriber starts the variable and the last one to leave stops it
+function subscribe(name, listener) {
+    let state = running.get(name);
+    if (!state) {
+        const definition = definitions.get(name);
+        state = {definition, value: null, listeners: new Set(), busy: false, failed: false, stopped: false, timerId: 0};
+        running.set(name, state);
+        const interval = Math.max(definition.interval ?? 1000, MIN_INTERVAL_MS);
+        const started = state;
+        state.timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {
+            refresh(name, started);
+            return GLib.SOURCE_CONTINUE;
+        });
+        refresh(name, state); // first value directly
+    }
+    state.listeners.add(listener);
+    return () => {
+        state.listeners.delete(listener);
+        if (state.listeners.size === 0)
+            stop(name, state);
+    };
+}
+
+// Every widget gets its own reader. Reading reader.variables.cpu subscribes to cpu,
+// after that onChange('cpu') is called every time cpu gets a new value. dispose() unsubscribes from everything
+export function createVariableReader(onChange) {
+    const subscriptions = new Map(); // name -> unsubscribe
+
+    const variables = new Proxy({}, {
+        get(_target, name) {
+            if (typeof name !== 'string')
+                return undefined;
+            if (!definitions.has(name)) {
+                if (!warned.has(name)) {
+                    warned.add(name);
+                    console.warn(`${LOG} unknown variable "${name}"`);
+                }
+                return undefined;
+            }
+            if (!subscriptions.has(name))
+                subscriptions.set(name, subscribe(name, onChange));
+            return running.get(name)?.value ?? null;
+        },
+        has: (_target, name) => definitions.has(name),
+        ownKeys: () => [...definitions.keys()],
+        getOwnPropertyDescriptor: (_target, name) =>
+            definitions.has(name) ? {enumerable: true, configurable: true} : undefined,
+        set: () => false,
+        defineProperty: () => false,
+        deleteProperty: () => false,
+    });
+
+    const dispose = () => {
+        for (const unsubscribe of subscriptions.values())
+            unsubscribe();
+        subscriptions.clear();
+    };
+    return {variables, dispose};
 }
 
 // Shuts everything down and forgets all variables, when the extension is disabled
 export function clearVariables() {
-    if (tickId)
-        GLib.Source.remove(tickId);
-    tickId = 0;
-    for (const name of active.keys())
-        definitions.get(name)?.reset?.();
-    active.clear();
+    for (const [name, state] of running)
+        stop(name, state);
+    running.clear();
     definitions.clear();
+    warned.clear();
 }
