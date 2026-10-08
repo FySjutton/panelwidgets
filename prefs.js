@@ -39,6 +39,18 @@ export default class PanelWidgetsPrefs extends ExtensionPreferences {
         });
         const p = new WidgetPrefs(page, config, id, settings.defaults ?? {});
 
+        // save button
+        const banner = new Adw.Banner({
+            title: 'You have unsaved changes',
+            button_label: 'Save',
+            revealed: p.dirty,
+        });
+        banner.connect('button-clicked', () => p.save());
+        p.onDirtyChange(dirty => (banner.revealed = dirty));
+        const bannerGroup = new Adw.PreferencesGroup();
+        bannerGroup.add(banner);
+        page.add(bannerGroup);
+
         p.group('Widget');
         p.switch('enabled', 'Enable Widget');
 

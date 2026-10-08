@@ -1,3 +1,5 @@
+import {Cleanup} from './cleanup.js';
+
 const registry = new Map(); // type -> Part class, filled by the loader from the parts/ folders
 
 export class Part {
@@ -5,6 +7,24 @@ export class Part {
         this.widget = widget;
         this.options = options;
         this.actor = null; // is set by createPart() from build()
+        this._cleanup = new Cleanup(); // disposed by the host after destroy(), even if destroy() doesn't call super
+    }
+
+    // Timers and signals made through these are removed automatically when the part is destroyed
+    timeout(ms, fn) {
+        return this._cleanup.timeout(ms, fn);
+    }
+
+    every(ms, fn) {
+        return this._cleanup.every(ms, fn);
+    }
+
+    cancel(id) {
+        this._cleanup.cancel(id);
+    }
+
+    connect(object, signal, fn) {
+        return this._cleanup.connect(object, signal, fn);
     }
 
     build() {

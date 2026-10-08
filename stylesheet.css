@@ -19,6 +19,7 @@
 .pw-big {
     font-size: 44px;
     font-weight: bold;
+    font-feature-settings: "tnum";
 }
 
 .pw-small {
