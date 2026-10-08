@@ -8,6 +8,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {
     CONFIG_DIR, CONFIG_FILE_NAME, Config, USER_PARTS_DIR, USER_VARIABLES_DIR, ensureDirs, findWidgetDirs,
 } from './core/config.js';
+import {resolveAnchoredPosition} from './core/anchor.js';
 import {loadParts, loadVariables} from './core/loader.js';
 import {Part, clearParts, defineParts} from './core/parts.js';
 import {Runner} from './core/runner.js';
@@ -34,6 +35,7 @@ export default class PanelWidgets extends Extension {
         this._config = new Config();
         this._config.load();
         this._watchConfig();
+        this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => this._repositionAll());
         this._load(this._token);
     }
 
@@ -44,6 +46,9 @@ export default class PanelWidgets extends Extension {
         this._reloadId = 0;
         this._configMonitor?.cancel();
         this._configMonitor = null;
+        if (this._monitorsChangedId)
+            Main.layoutManager.disconnect(this._monitorsChangedId);
+        this._monitorsChangedId = 0;
 
         for (const id of [...(this._widgets?.keys() ?? [])])
             this._destroyWidget(id);
@@ -135,8 +140,10 @@ export default class PanelWidgets extends Extension {
             widget.settings = settings;
             widget.actor.add_style_class_name(`pw-${known.id}`); // so that the widgets css can be contained
             widget.build();
-            widget.actor.set_position(settings.get('x'), settings.get('y'));
             Main.layoutManager._backgroundGroup.add_child(widget.actor);
+            // recalculate position when widget changes size
+            widget.actor.connect('notify::allocation', () => this._positionWidget(widget, widget.settings));
+            this._positionWidget(widget, settings);
         } catch (e) {
             console.error(`${LOG} kunde inte skapa widgeten ${known.id}: ${e.message}`);
             widget?.dispose?.();
@@ -149,6 +156,32 @@ export default class PanelWidgets extends Extension {
         this._widgets.set(known.id, {widget, runner, key});
         runner.start();
         console.log(`${LOG} visar ${known.id}`);
+    }
+
+    _positionWidget(widget, settings) {
+        const pos = resolveAnchoredPosition(widget.actor, {
+            monitor: settings.get('anchorMonitor'),
+            screenX: settings.get('anchorScreenX'),
+            screenY: settings.get('anchorScreenY'),
+            widgetX: settings.get('anchorWidgetX'),
+            widgetY: settings.get('anchorWidgetY'),
+            offsetX: settings.get('x'),
+            offsetY: settings.get('y'),
+        });
+        if (!pos) {
+            console.warn(`${LOG} ${widget.id}: monitor ${settings.get('anchorMonitor')} finns inte`);
+            return;
+        }
+        const [x, y] = pos;
+        // Guard against re-triggering notify::allocation with a no-op move
+        if (widget.actor.x !== x || widget.actor.y !== y)
+            widget.actor.set_position(x, y);
+    }
+
+    // Monitors were added/removed/resized: anchored widgets need a new position
+    _repositionAll() {
+        for (const {widget} of this._widgets.values())
+            this._positionWidget(widget, widget.settings);
     }
 
     _destroyWidget(id) {

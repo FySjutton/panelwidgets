@@ -9,7 +9,13 @@ export const CONFIG_FILE_NAME = 'config.json';
 const CONFIG_FILE = GLib.build_filenamev([CONFIG_DIR, CONFIG_FILE_NAME]);
 
 // Applies to all widgets unless they say something else
-export const STANDARD_DEFAULTS = {enabled: true, x: 100, y: 100};
+// x/y is an offset from the anchor point
+export const STANDARD_DEFAULTS = {
+    enabled: true, x: 100, y: 100,
+    anchorMonitor: 0,
+    anchorScreenX: 'left', anchorScreenY: 'top',
+    anchorWidgetX: 'left', anchorWidgetY: 'top',
+};
 
 export function ensureDirs() {
     for (const dir of [USER_WIDGETS_DIR, USER_PARTS_DIR, USER_VARIABLES_DIR])

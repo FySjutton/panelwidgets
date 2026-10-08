@@ -49,6 +49,15 @@ export class WidgetPrefs {
         return row;
     }
 
+    // options is a plain list of strings, the value saved is the chosen string itself
+    combo(key, title, options, {subtitle} = {}) {
+        const row = new Adw.ComboRow(this._props(title, subtitle, {model: Gtk.StringList.new(options)}));
+        row.selected = Math.max(0, options.indexOf(String(this._settings.get(key, options[0]))));
+        row.connect('notify::selected', () => this._set(key, options[row.selected]));
+        this._add(row);
+        return row;
+    }
+
     // Text is saved when the confirm button is pressed, not for every character
     entry(key, title) {
         const row = new Adw.EntryRow({
