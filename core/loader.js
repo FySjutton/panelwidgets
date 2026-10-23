@@ -6,15 +6,19 @@ import {listJsFiles} from './config.js';
 import {isPartClass} from './parts.js';
 
 const LOG = '[panelwidgets]';
+let cacheBustCounter = 0;
 
-// Imports every .js file, builtin folder first and then the user's
-async function importFolder(builtinDir, userDir) {
+// Imports every .js file in the folder
+async function importFolder(builtinDir, userDir, cacheBust) {
     const modules = [];
     for (const [dir, builtin] of [[builtinDir, true], [userDir, false]]) {
         for (const name of listJsFiles(dir)) {
             const path = GLib.build_filenamev([dir, name]);
             try {
-                const module = await import(Gio.File.new_for_path(path).get_uri());
+                let uri = Gio.File.new_for_path(path).get_uri();
+                if (cacheBust)
+                    uri += `?t=${Date.now()}-${cacheBustCounter++}`;
+                const module = await import(uri);
                 modules.push({file: name.slice(0, -'.js'.length), path, builtin, module});
             } catch (e) {
                 console.error(`${LOG} could not load ${path}: ${e.message}`);
@@ -24,25 +28,35 @@ async function importFolder(builtinDir, userDir) {
     return modules;
 }
 
-// Highest priority wins, on equal priority the user's folder beats builtin and then the file name decides
-function pickWinners(candidates, kind) {
-    candidates.sort((a, b) =>
-        (a.priority - b.priority) || (b.builtin - a.builtin) || a.path.localeCompare(b.path));
+function resolve(candidates, overrides, kind) {
+    const items = candidates.map(c => ({
+        ...c,
+        enabled: (overrides[c.name]?.enabled ?? true) !== false,
+        active: false,
+    }));
+
+    const live = items
+        .filter(c => c.enabled)
+        .sort((a, b) => (a.priority - b.priority) || (b.builtin - a.builtin) || a.path.localeCompare(b.path));
     const winners = new Map();
-    for (const candidate of candidates) {
+    for (const candidate of live) {
         const previous = winners.get(candidate.name);
         if (previous)
             console.log(`${LOG} ${kind} "${candidate.name}": ${candidate.path} overrides ${previous.path}`);
         winners.set(candidate.name, candidate);
     }
-    return new Map([...winners].map(([name, {value}]) => [name, value]));
+    for (const winner of winners.values())
+        winner.active = true;
+
+    return {winners, items};
 }
 
-// A file exports default {name: {interval, update(), reset()}, ...} and optionally a priority for all of them.
-// update() returns the value and may be async
-export async function loadVariables(builtinDir, userDir) {
+// Plain info about each candidate, without the code itself
+const toInfo = items => items.map(({value: _value, ...info}) => info);
+
+export async function loadVariables(builtinDir, userDir, overrides = {}, cacheBust = false) {
     const candidates = [];
-    for (const {path, builtin, module} of await importFolder(builtinDir, userDir)) {
+    for (const {path, builtin, module} of await importFolder(builtinDir, userDir, cacheBust)) {
         if (typeof module.default !== 'object' || module.default === null) {
             console.error(`${LOG} ${path}: needs export default {name: {...}}`);
             continue;
@@ -56,13 +70,16 @@ export async function loadVariables(builtinDir, userDir) {
             candidates.push({name, value: definition, priority, builtin, path});
         }
     }
-    return pickWinners(candidates, 'variable');
+    const {winners, items} = resolve(candidates, overrides, 'variable');
+    return {
+        definitions: new Map([...winners].map(([name, {value}]) => [name, value])),
+        items: toInfo(items),
+    };
 }
 
-// A file exports default a Part class, the type is the file name unless it exports type
-export async function loadParts(builtinDir, userDir) {
+export async function loadParts(builtinDir, userDir, overrides = {}, cacheBust = false) {
     const candidates = [];
-    for (const {file, path, builtin, module} of await importFolder(builtinDir, userDir)) {
+    for (const {file, path, builtin, module} of await importFolder(builtinDir, userDir, cacheBust)) {
         if (!isPartClass(module.default)) {
             console.error(`${LOG} ${path}: needs export default a class that extends Part`);
             continue;
@@ -70,5 +87,9 @@ export async function loadParts(builtinDir, userDir) {
         const name = module.type ?? file;
         candidates.push({name, value: module.default, priority: module.priority ?? 0, builtin, path});
     }
-    return pickWinners(candidates, 'part');
+    const {winners, items} = resolve(candidates, overrides, 'part');
+    return {
+        classes: new Map([...winners].map(([name, {value}]) => [name, value])),
+        items: toInfo(items),
+    };
 }

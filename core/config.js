@@ -8,6 +8,8 @@ export const USER_VARIABLES_DIR = GLib.build_filenamev([CONFIG_DIR, 'variables']
 export const CONFIG_FILE_NAME = 'config.json';
 const CONFIG_FILE = GLib.build_filenamev([CONFIG_DIR, CONFIG_FILE_NAME]);
 
+const KINDS = ['widgets', 'variables', 'parts'];
+
 // Applies to all widgets unless they say something else
 // x/y is an offset from the anchor point
 export const STANDARD_DEFAULTS = {
@@ -16,6 +18,9 @@ export const STANDARD_DEFAULTS = {
     anchorScreenX: 'left', anchorScreenY: 'top',
     anchorWidgetX: 'left', anchorWidgetY: 'top',
 };
+
+// Applies itself to every variable/part unless its own config says something else
+export const ITEM_DEFAULTS = {enabled: true};
 
 export function ensureDirs() {
     for (const dir of [USER_WIDGETS_DIR, USER_PARTS_DIR, USER_VARIABLES_DIR])
@@ -57,11 +62,11 @@ export function findWidgetDirs(builtinDir) {
     return new Map([...found].sort(([a], [b]) => a.localeCompare(b)));
 }
 
-// The setting of the widget, what the user has choosen, otherwise the default values
-export class WidgetSettings {
+// The setting of the widget/part/variable, what the user has choosen, otherwise the default values
+export class ItemSettings {
     constructor(values, defaults) {
         this._values = values;
-        this._defaults = {...STANDARD_DEFAULTS, ...defaults};
+        this._defaults = defaults;
     }
 
     get(key, fallback) {
@@ -73,19 +78,20 @@ export class WidgetSettings {
     }
 }
 
+// All settings live in one file, grouped by kind: widgets (by id), variables and parts (by name, only whether the user has switched them off)
 export class Config {
     constructor() {
-        this._data = {widgets: {}};
+        this._data = {widgets: {}, variables: {}, parts: {}};
     }
 
     load() {
         try {
             const [, contents] = GLib.file_get_contents(CONFIG_FILE);
             const data = JSON.parse(new TextDecoder().decode(contents));
-            this._data = {widgets: data?.widgets ?? {}};
+            this._data = Object.fromEntries(KINDS.map(kind => [kind, data?.[kind] ?? {}]));
         } catch (_e) {
             // The file is either missing or is broken, restart with empty settings
-            this._data = {widgets: {}};
+            this._data = {widgets: {}, variables: {}, parts: {}};
         }
     }
 
@@ -96,17 +102,26 @@ export class Config {
             new TextEncoder().encode(text), null, false, Gio.FileCreateFlags.NONE, null);
     }
 
-    // values that the user has changed
-    values(id) {
-        return this._data.widgets[id] ?? {};
+    // values that the user has changed for one item
+    values(kind, id) {
+        return this._data[kind][id] ?? {};
+    }
+
+    // every item's values for a whole kind, id -> {key: value, ...}. Used by the loader to see which variables/parts the user has switched off
+    allValues(kind) {
+        return this._data[kind];
     }
 
     widgetSettings(id, defaults = {}) {
-        return new WidgetSettings(this.values(id), defaults);
+        return new ItemSettings(this.values('widgets', id), {...STANDARD_DEFAULTS, ...defaults});
+    }
+
+    itemSettings(kind, id) {
+        return new ItemSettings(this.values(kind, id), ITEM_DEFAULTS);
     }
 
     // changes in memory, call save() to write to the disk
-    set(id, key, value) {
-        (this._data.widgets[id] ??= {})[key] = value;
+    set(kind, id, key, value) {
+        (this._data[kind][id] ??= {})[key] = value;
     }
 }

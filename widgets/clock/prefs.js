@@ -1,4 +1,4 @@
 export default function buildPrefs(p) {
-    p.group('Utseende');
-    p.switch('showDate', 'Visa datum');
+    p.group('Looks');
+    p.switch('showDate', 'Show date');
 }

@@ -4,14 +4,14 @@ import Gtk from 'gi://Gtk';
 const LENGTHS = [20, 40, 80];
 
 export default function buildPrefs(p) {
-    p.group('Utseende');
-    p.entry('title', 'Titel');
-    p.switch('showLoad', 'Visa load');
-    p.switch('showGraph', 'Visa graf');
+    p.group('Visuals');
+    p.entry('title', 'Title');
+    p.switch('showLoad', 'Show load');
+    p.switch('showGraph', 'Show grafh');
 
     const group = p.group('Graf');
     const row = new Adw.ComboRow({
-        title: 'Antal mätpunkter',
+        title: 'Measuring points',
         model: Gtk.StringList.new(LENGTHS.map(String)),
     });
     row.selected = Math.max(0, LENGTHS.indexOf(p.get('history')));

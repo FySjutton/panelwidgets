@@ -6,12 +6,41 @@ const MIN_INTERVAL_MS = 250; // the fastest a variable may update
 const definitions = new Map(); // name -> definition, filled by the loader from the variables/ folders
 const running = new Map();     // name -> state, only variables someone is subscribed to
 const warned = new Set();      // unknown names we already complained about
+const readers = new Set();     // every widget's reader, {onChange, names}, see createVariableReader
 
-// Replaces the variables with the ones the loader picked
 export function defineVariables(variables) {
-    clearVariables();
-    for (const [name, definition] of variables)
+    const appeared = [];
+    for (const name of [...definitions.keys()]) {
+        if (!variables.has(name)) {
+            definitions.delete(name);
+            const state = running.get(name);
+            if (state)
+                stop(name, state);
+            appeared.push(name);
+        }
+    }
+    for (const [name, definition] of variables) {
+        if (!definitions.has(name))
+            appeared.push(name);
         definitions.set(name, definition);
+        const state = running.get(name);
+        if (state)
+            state.definition = definition; // keep the timer and listeners, just run new code
+    }
+
+    // A widget only looks at a variable when it updates, so one that read a variable which has now
+    // appeared or disappeared would never find out. Tell the ones that have read it
+    for (const name of appeared) {
+        for (const reader of [...readers]) {
+            if (!reader.names.has(name))
+                continue;
+            try {
+                reader.onChange(name);
+            } catch (e) {
+                console.error(`${LOG} listener for "${name}" failed: ${e.message}`);
+            }
+        }
+    }
 }
 
 // update() returns the value and may be async. Listeners are only told when the value actually changed
@@ -73,22 +102,26 @@ function subscribe(name, listener) {
         refresh(name, state); // first value directly
     }
     state.listeners.add(listener);
-    return () => {
+    const unsubscribe = () => {
         state.listeners.delete(listener);
         if (state.listeners.size === 0)
             stop(name, state);
     };
+    return {state, unsubscribe};
 }
 
 // Every widget gets its own reader. Reading reader.variables.cpu subscribes to cpu,
 // after that onChange('cpu') is called every time cpu gets a new value. dispose() unsubscribes from everything
 export function createVariableReader(onChange) {
-    const subscriptions = new Map(); // name -> unsubscribe
+    const subscriptions = new Map(); // name -> {state, unsubscribe}
+    const reader = {onChange, names: new Set()}; // names: everything this widget has asked for
+    readers.add(reader);
 
     const variables = new Proxy({}, {
         get(_target, name) {
             if (typeof name !== 'string')
                 return undefined;
+            reader.names.add(name);
             if (!definitions.has(name)) {
                 if (!warned.has(name)) {
                     warned.add(name);
@@ -96,9 +129,13 @@ export function createVariableReader(onChange) {
                 }
                 return undefined;
             }
-            if (!subscriptions.has(name))
-                subscriptions.set(name, subscribe(name, onChange));
-            return running.get(name)?.value ?? null;
+            let subscription = subscriptions.get(name);
+            if (!subscription || subscription.state.stopped) {
+                // first read, or the variable was stopped (switched off, then on again)
+                subscription = subscribe(name, onChange);
+                subscriptions.set(name, subscription);
+            }
+            return subscription.state.value;
         },
         has: (_target, name) => definitions.has(name),
         ownKeys: () => [...definitions.keys()],
@@ -110,7 +147,8 @@ export function createVariableReader(onChange) {
     });
 
     const dispose = () => {
-        for (const unsubscribe of subscriptions.values())
+        readers.delete(reader);
+        for (const {unsubscribe} of subscriptions.values())
             unsubscribe();
         subscriptions.clear();
     };

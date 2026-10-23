@@ -1,20 +1,6 @@
 # Panel Widgets
 Panel Widgets adds dektop widgets for the GNOME Shell. Widgets are small JavaScript classes loaded from plain folders.
 
-- [Installing and developing](#installing-and-developing)
-- [How it fits together](#how-it-fits-together)
-- [Your first widget](#your-first-widget)
-- [Widgets](#widgets)
-- [Variables](#variables)
-- [Parts](#parts)
-- [Overriding built-in things](#overriding-built-in-things)
-- [Settings and the preferences window](#settings-and-the-preferences-window)
-- [Positioning](#positioning)
-- [Styling](#styling)
-- [Cleaning up](#cleaning-up)
-- [Debugging](#debugging)
-- [Limitations](#limitations)
-
 ## Installing and developing
 
 Put the extension folder at
